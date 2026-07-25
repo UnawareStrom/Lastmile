@@ -118,7 +118,7 @@ To create a nationwide medicine-sharing network that minimizes waste, improves e
 
 # 🤝 Contributors
 
-- Your Name
+- Aayush Chaudhary 
 - Team Neural Forge
 
 ---
