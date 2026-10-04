@@ -5,6 +5,7 @@ export default function Sidebar({ activeView, setActiveView, onAdminClick }) {
 
   const navItems = [
     { id: 'dashboard', icon: 'fa-gauge-high', label: 'Dashboard' },
+    { id: 'inventory', icon: 'fa-boxes-stacked', label: 'Inventory' },
     { id: 'settings', icon: 'fa-sliders', label: 'Settings' },
     { id: 'admin', icon: 'fa-shield-halved', label: 'Admin Panel', adminOnly: true },
   ];

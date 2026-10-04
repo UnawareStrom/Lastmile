@@ -543,12 +543,3 @@ export default function Inventory() {
     </div>
   );
 }
-Cancel
-              </button >
-            </div >
-          </div >
-        </Modal >
-      )}
-    </div >
-  );
-}
