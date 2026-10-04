@@ -24,21 +24,23 @@ export default function ClinicPortal() {
   // Provider accept
   const [acceptedOtp, setAcceptedOtp] = useState({});
 
+
   useEffect(() => {
     fetchClinics();
     fetchInventory();
   }, []);
 
   useEffect(() => {
-    if (clinics.length && !myClinicId) {
+    if (clinics.length && (!myClinicId || !clinics.some(c => c.id === myClinicId))) {
       const saved = localStorage.getItem('cp_clinicId');
-      setMyClinicId(saved || clinics[0].id);
+      const validSaved = clinics.some(c => c.id === saved) ? saved : null;
+      setMyClinicId(validSaved || clinics[0].id);
     }
-  }, [clinics]);
+  }, [clinics, myClinicId]);
 
   useEffect(() => {
     fetchRequests();
-    const interval = setInterval(fetchRequests, 4000);
+    const interval = setInterval(fetchRequests, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -161,7 +163,7 @@ export default function ClinicPortal() {
             onChange={e => handleClinicChange(e.target.value)}
             style={{ minWidth: '220px' }}
           >
-            {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {clinics.slice(0, 100).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
       </div>
@@ -297,7 +299,7 @@ export default function ClinicPortal() {
                   const inTransit  = req.status === 'In Transit';
                   const delivered  = req.status === 'Delivered';
                   const alreadyVerified = otpSuccess[req.id];
-                  const otpToShow  = acceptedOtp[req.id];
+                  const otpToShow  = req.otp || acceptedOtp[req.id];
 
                   return (
                     <div key={req.id} style={{
@@ -315,12 +317,7 @@ export default function ClinicPortal() {
                       {/* In Transit: OTP verification */}
                       {inTransit && !delivered && (
                         <div style={{ marginTop: '0.75rem' }}>
-                          {otpToShow && (
-                            <div style={{ marginBottom: '0.5rem', padding: '0.5rem 0.75rem', background: 'rgba(45,212,191,0.08)', borderRadius: '0.5rem', border: '1px solid rgba(45,212,191,0.2)' }}>
-                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>OTP for provider: </span>
-                              <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--primary)', letterSpacing: '0.12em' }}>{otpToShow}</strong>
-                            </div>
-                          )}
+
                           {alreadyVerified ? (
                             <div style={{ color: 'var(--success)', fontSize: '0.82rem' }}><i className="fa-solid fa-check-circle"></i> Delivery confirmed!</div>
                           ) : (
@@ -330,7 +327,12 @@ export default function ClinicPortal() {
                                 placeholder="Enter OTP to confirm delivery"
                                 value={otpInputs[req.id] || ''}
                                 onChange={e => setOtpInputs(p => ({ ...p, [req.id]: e.target.value }))}
-                                style={{ flex: 1, fontFamily: 'var(--font-mono)', letterSpacing: '0.1em' }}
+                                style={{
+                                  flex: 1, padding: '0.5rem 0.75rem', borderRadius: '0.5rem',
+                                  background: 'rgba(0,0,0,0.25)', border: `1px solid ${otpError[req.id] ? 'var(--danger)' : 'var(--border-color)'}`,
+                                  color: 'var(--text-main)', fontSize: '1rem', letterSpacing: '0.2rem', fontWeight: 700,
+                                  fontFamily: 'var(--font-mono)', outline: 'none'
+                                }}
                               />
                               <button className="btn btn-primary" style={{ whiteSpace: 'nowrap' }} onClick={() => handleVerifyOtp(req.id)}>
                                 <i className="fa-solid fa-check"></i> Confirm

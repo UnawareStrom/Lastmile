@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, Fragment } from 'react';
 import { useApp } from '../context/AppContext';
 import Modal from '../components/Modal';
 
 export default function Inventory() {
   const { inventory, clinics, fetchInventory, fetchClinics, addInventoryItem, useStock, calcTrueExcess, getClinicName, config, isAdminLoggedIn } = useApp();
   const [search, setSearch] = useState('');
-  const [viewingAs, setViewingAs] = useState('C001');
+  const [viewingAs, setViewingAs] = useState('ADMIN');
   const [filterMed, setFilterMed] = useState('ALL');
   const [showModal, setShowModal] = useState(false);
   const [showCodesModal, setShowCodesModal] = useState(false);
@@ -34,7 +34,7 @@ export default function Inventory() {
     const interval = setInterval(async () => {
       await fetchInventory();
       setLastRefresh(new Date());
-    }, 5000);
+    }, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -133,19 +133,17 @@ export default function Inventory() {
           <p className="text-muted">Full medicine stock across all clinic nodes</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          {isAdminLoggedIn && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(0,0,0,0.2)', padding: '0.3rem 0.6rem', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Viewing As:</span>
-              <select 
-                value={viewingAs} 
-                onChange={e => setViewingAs(e.target.value)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--text-main)', fontSize: '0.85rem', outline: 'none', cursor: 'pointer' }}
-              >
-                <option value="ADMIN">System Admin</option>
-                {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(0,0,0,0.2)', padding: '0.3rem 0.6rem', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Clinic:</span>
+            <select 
+              value={viewingAs} 
+              onChange={e => setViewingAs(e.target.value)}
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-main)', fontSize: '0.85rem', outline: 'none', cursor: 'pointer' }}
+            >
+              <option value="ADMIN">All Clinics (Network View)</option>
+              {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
             <i className="fa-solid fa-circle" style={{ color: 'var(--success)', fontSize: '0.5rem', marginRight: '0.3rem' }}></i>
             Updated {lastRefresh.toLocaleTimeString()}
@@ -218,7 +216,7 @@ export default function Inventory() {
                 const excess = calcTrueExcess(item);
                 const nearEx = item.stock > 0 && item.expiryDays <= config.expiryThresholdDays;
                 const isLowStock = item.stock < item.avgMonthlyUsage;
-                const showExpiryDropdown = group.variants.some((variant, index) => group.variants.some(other => other.id !== variant.id && other.expiryDays !== variant.expiryDays));
+                const showExpiryDropdown = group.variants.length > 1;
                 const isExpanded = expandedMedicine === group.masterCode;
 
                 let badge = <span className="badge badge-success">Optimal</span>;
@@ -228,8 +226,8 @@ export default function Inventory() {
                 else if (isLowStock) badge = <span className="badge badge-danger">Low Stock</span>;
 
                 return (
-                  <>
-                    <tr key={group.masterCode} style={{ backgroundColor: isLowStock ? 'rgba(239, 68, 68, 0.05)' : 'transparent' }}>
+                  <React.Fragment key={group.masterCode}>
+                    <tr style={{ backgroundColor: isLowStock ? 'rgba(239, 68, 68, 0.05)' : 'transparent' }}>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                           {showExpiryDropdown && (
@@ -294,7 +292,7 @@ export default function Inventory() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </React.Fragment>
                 );
               })}
               {filtered.length === 0 && (

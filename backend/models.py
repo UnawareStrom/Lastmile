@@ -33,6 +33,7 @@ class Request(Base):
     provider_clinic_id = Column(String, nullable=True)
     provider_inventory_id = Column(Integer, nullable=True)
     transfer_amt = Column(Integer, nullable=True)
+    otp_attempts = Column(Integer, default=0)
 
 class ActivityLog(Base):
     __tablename__ = "activity_logs"

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 
-const API_BASE = '/api';
+const API_BASE = `http://${window.location.hostname}:8000/api`;
 
 const AppContext = createContext(null);
 

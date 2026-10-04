@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+
+const API = `http://${window.location.hostname}:8000/api`;
 
 export default function ProviderPortal() {
   const { clinics, fetchClinics, inventory } = useApp();
@@ -12,7 +14,10 @@ export default function ProviderPortal() {
   const [otpSuccess, setOtpSuccess] = useState({});
   const [acceptedOtp, setAcceptedOtp] = useState({});
   const [tabFilter, setTabFilter] = useState('active');
-  const [offerAmts, setOfferAmts] = useState({}); // custom offer amounts per request
+  const [offerAmts, setOfferAmts] = useState({});
+  const [showOtp, setShowOtp] = useState({});
+  const [copiedOtp, setCopiedOtp] = useState({});
+  const copiedTimersRef = useRef({});
 
   useEffect(() => {
     if (clinics.length === 0) fetchClinics();
@@ -26,13 +31,13 @@ export default function ProviderPortal() {
 
   useEffect(() => {
     fetchRequests();
-    const interval = setInterval(fetchRequests, 3000);
+    const interval = setInterval(fetchRequests, 30000);
     return () => clearInterval(interval);
   }, []);
 
   async function fetchRequests() {
     try {
-      const res = await fetch(`http://${window.location.hostname}:8000/api/requests`);
+      const res = await fetch(`${API}/requests`);
       const data = await res.json();
       setRequests(data);
     } catch (e) {
@@ -44,7 +49,7 @@ export default function ProviderPortal() {
 
   async function handleAccept(reqId, providerId, customAmt) {
     try {
-      const res = await fetch(`http://${window.location.hostname}:8000/api/requests/${reqId}/accept`, {
+      const res = await fetch(`${API}/requests/${reqId}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider_clinic_id: providerId, custom_transfer_amt: customAmt || null })
@@ -66,7 +71,7 @@ export default function ProviderPortal() {
     const otp = otpInputs[reqId] || '';
     setOtpError(prev => ({ ...prev, [reqId]: null }));
     try {
-      const res = await fetch(`http://${window.location.hostname}:8000/api/requests/${reqId}/verify`, {
+      const res = await fetch(`${API}/requests/${reqId}/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ otp })
@@ -86,7 +91,7 @@ export default function ProviderPortal() {
   async function handleCancel(reqId) {
     if (!window.confirm('Are you sure you want to cancel this request?')) return;
     try {
-      const res = await fetch(`http://${window.location.hostname}:8000/api/requests/${reqId}/cancel`, {
+      const res = await fetch(`${API}/requests/${reqId}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -100,14 +105,6 @@ export default function ProviderPortal() {
       alert('Network error. Could not cancel request.');
     }
   }
-
-  const statusColor = (status) => {
-    if (status === 'Pending') return 'var(--warning, #f59e0b)';
-    if (status === 'In Transit') return 'var(--primary)';
-    if (status === 'Delivered') return 'var(--success)';
-    if (status === 'Cancelled') return 'var(--danger)';
-    return 'var(--text-muted)';
-  };
 
   const statusBadge = (status) => {
     if (status === 'Pending') return 'badge-warning';
@@ -177,7 +174,9 @@ export default function ProviderPortal() {
             const isMyRequest = req.requesting_clinic_id === myClinicId;
             const myMatch = matches.find(m => m.providerClinic.id === myClinicId);
             const iAmProvider = req.provider_clinic_id === myClinicId;
-            const myOtp = acceptedOtp[req.id];
+            const rawOtp = req.otp || acceptedOtp[req.id];
+            const isRevealed = showOtp[req.id] ?? true;
+            const displayOtp = isRevealed ? (rawOtp || '••••••') : '••••••';
 
             return (
               <div key={req.id} className="card" style={{
@@ -285,12 +284,41 @@ export default function ProviderPortal() {
                           fontSize: '2rem', fontWeight: 800, letterSpacing: '0.4rem',
                           color: 'var(--primary)', background: 'rgba(99,102,241,0.12)',
                           borderRadius: '0.75rem', padding: '0.75rem 1rem',
-                          border: '2px dashed var(--primary)', marginBottom: '0.5rem'
+                          border: '2px dashed var(--primary)', marginBottom: '0.5rem',
+                          fontFamily: 'var(--font-mono)'
                         }}>
-                          {myOtp || '••••••'}
+                          {displayOtp}
                         </div>
-                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                          {myOtp ? 'Keep this code secure' : 'Reload the page if code is missing'}
+                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }}
+                            onClick={() => setShowOtp(prev => ({ ...prev, [req.id]: !(prev[req.id] ?? true) }))}
+                          >
+                            <i className={`fa-solid ${isRevealed ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                            {isRevealed ? 'Hide OTP' : 'See OTP'}
+                          </button>
+                          {rawOtp && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }}
+                              onClick={() => {
+                                navigator.clipboard.writeText(rawOtp);
+                                setCopiedOtp(prev => ({ ...prev, [req.id]: true }));
+                                // Clear any existing timer for this request
+                                if (copiedTimersRef.current[req.id]) clearTimeout(copiedTimersRef.current[req.id]);
+                                copiedTimersRef.current[req.id] = setTimeout(() => setCopiedOtp(prev => ({ ...prev, [req.id]: false })), 2000);
+                              }}
+                            >
+                              <i className={`fa-solid ${copiedOtp[req.id] ? 'fa-check' : 'fa-copy'}`}></i>
+                              {copiedOtp[req.id] ? 'Copied!' : 'Copy OTP'}
+                            </button>
+                          )}
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>
+                          {rawOtp ? 'Keep this code secure until handover' : 'Waiting for code generation'}
                         </p>
                       </div>
                     ) : isMyRequest ? (
@@ -299,6 +327,7 @@ export default function ProviderPortal() {
                         <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '0 0 0.75rem' }}>
                           <i className="fa-solid fa-truck-fast"></i> Medicine is on the way. Enter the OTP from the provider to confirm delivery:
                         </p>
+
                         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
                           <input
                             type="text"
@@ -327,9 +356,27 @@ export default function ProviderPortal() {
                         )}
                       </div>
                     ) : (
-                      <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                        <i className="fa-solid fa-truck-fast"></i> In transit between clinics.
-                      </p>
+                      <div style={{ textAlign: 'center' }}>
+                        <p style={{ margin: '0 0 0.4rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                          <i className="fa-solid fa-truck-fast"></i> In transit from <strong>{req.provider_clinic_id}</strong> → <strong>{req.requesting_clinic_id}</strong>
+                        </p>
+                        {rawOtp && (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.04)', padding: '0.35rem 0.75rem', borderRadius: '0.5rem', border: '1px solid var(--border-color)', marginTop: '0.3rem' }}>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>OTP:</span>
+                            <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--primary)', letterSpacing: '0.1em' }}>
+                              {showOtp[req.id] ? rawOtp : '••••••'}
+                            </strong>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem' }}
+                              onClick={() => setShowOtp(prev => ({ ...prev, [req.id]: !prev[req.id] }))}
+                            >
+                              <i className={`fa-solid ${showOtp[req.id] ? 'fa-eye-slash' : 'fa-eye'}`}></i> {showOtp[req.id] ? 'Hide' : 'See OTP'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}

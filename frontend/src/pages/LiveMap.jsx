@@ -2,7 +2,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+import 'leaflet.markercluster';
 const API = `http://${window.location.hostname}:8000/api`;
 
 // Fix Leaflet's default icon path issue with bundlers
@@ -13,8 +15,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// Tile providers — plain OpenStreetMap (100% free, no API key ever)
-// Dark mode uses CSS filter on the map container for dark appearance
 const TILES = {
   dark: {
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -27,12 +27,11 @@ const TILES = {
 };
 
 function createHospitalIcon(hospital) {
-  const isInactive = hospital.status !== 'Active';
   const hasActiveReqs = hospital.activeRequests > 0;
-
-  let color = '#3ddc84'; // green — healthy
+  let color = '#3ddc84';
   let glow = 'rgba(61,220,132,0.4)';
-  if (isInactive) {
+
+  if (hospital.status !== 'Active') {
     color = '#545e6b';
     glow = 'rgba(84,94,107,0.3)';
   } else if (hospital.nearExpiry > 0 || hospital.outOfStock > 0) {
@@ -127,6 +126,26 @@ function buildPopupContent(hospital) {
   `;
 }
 
+// Compute bearing between two [lat, lng] points (degrees, 0=north, clockwise)
+function bearing(a, b) {
+  const toRad = d => (d * Math.PI) / 180;
+  const toDeg = r => (r * 180) / Math.PI;
+  const dLng = toRad(b[1] - a[1]);
+  const y = Math.sin(dLng) * Math.cos(toRad(b[0]));
+  const x = Math.cos(toRad(a[0])) * Math.sin(toRad(b[0])) -
+            Math.sin(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.cos(dLng);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+
+
+// Smooth ease-in-out function for natural vehicle movement
+function easeInOutCubic(t) {
+  return t < 0.5
+    ? 4 * t * t * t
+    : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
 export default function LiveMap() {
   const { theme } = useApp();
   const mapRef = useRef(null);
@@ -146,6 +165,11 @@ export default function LiveMap() {
   const [routeInfo, setRouteInfo] = useState(null);
   const [routeLoading, setRouteLoading] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [sidebarLimit, setSidebarLimit] = useState(50);
+
+  // Vehicle animation refs
+  const vehicleAnimRef = useRef(null);
+  const vehicleMarkerRef = useRef(null);
 
   // Fetch data
   const fetchData = useCallback(async () => {
@@ -154,10 +178,8 @@ export default function LiveMap() {
         fetch(`${API}/hospitals`),
         fetch(`${API}/requests`),
       ]);
-      const hospData = await hospRes.json();
-      const reqData = await reqRes.json();
-      setHospitals(hospData);
-      setRequests(reqData);
+      setHospitals(await hospRes.json());
+      setRequests(await reqRes.json());
     } catch (e) {
       console.error('Failed to fetch map data:', e);
     }
@@ -165,7 +187,7 @@ export default function LiveMap() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 10000);
+    const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
@@ -188,16 +210,30 @@ export default function LiveMap() {
       maxZoom: 19,
     }).addTo(map);
 
-    markersLayerRef.current = L.layerGroup().addTo(map);
+    markersLayerRef.current = L.markerClusterGroup({
+      chunkedLoading: true,
+      disableClusteringAtZoom: 16,
+      maxClusterRadius: 60,
+      spiderfyOnMaxZoom: true,
+    }).addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
 
     mapInstanceRef.current = map;
+
+    setTimeout(() => map.invalidateSize(), 150);
 
     return () => {
       map.remove();
       mapInstanceRef.current = null;
     };
   }, []);
+
+  // Invalidate map size when sidebar opens/closes
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    const timer = setTimeout(() => mapInstanceRef.current?.invalidateSize(), 200);
+    return () => clearTimeout(timer);
+  }, [sidebarOpen]);
 
   // Switch tiles on theme change
   useEffect(() => {
@@ -211,6 +247,7 @@ export default function LiveMap() {
     if (!mapInstanceRef.current || !markersLayerRef.current) return;
     markersLayerRef.current.clearLayers();
 
+    const markers = [];
     hospitals.forEach(h => {
       const icon = createHospitalIcon(h);
       const marker = L.marker([h.lat, h.lng], { icon })
@@ -219,76 +256,211 @@ export default function LiveMap() {
           maxWidth: 320,
           minWidth: 260,
         })
-        .on('click', () => {
-          setSelectedHospitalId(h.id);
-        });
-      markersLayerRef.current.addLayer(marker);
+        .on('click', () => setSelectedHospitalId(h.id));
+      // Instead of adding them one by one which triggers DOM updates, we add them in bulk for performance
+      markers.push(marker);
     });
+    markersLayerRef.current.addLayers(markers);
   }, [hospitals]);
 
-  // Draw route between selected hospitals
+  // Active in-transit requests
+  const inTransitRequests = useMemo(() => {
+    return requests.filter(r => r.status === 'In Transit' && r.provider_clinic_id && r.requesting_clinic_id);
+  }, [requests]);
+
+  // Auto-select the first in-transit route on load
+  const autoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (autoSelectedRef.current) return;
+    if (hospitals.length > 0 && inTransitRequests.length > 0) {
+      const active = inTransitRequests[0];
+      setRouteFrom(active.provider_clinic_id);
+      setRouteTo(active.requesting_clinic_id);
+      autoSelectedRef.current = true;
+    }
+  }, [hospitals, inTransitRequests]);
+
+  const hospitalsRef = useRef(hospitals);
+  useEffect(() => {
+    hospitalsRef.current = hospitals;
+  }, [hospitals]);
+
+  // ─── Draw route & animate vehicle (SLOW + SMOOTH) ───
   useEffect(() => {
     if (!routeFrom || !routeTo || !routeLayerRef.current) return;
 
-    const fromH = hospitals.find(h => h.id === routeFrom);
-    const toH = hospitals.find(h => h.id === routeTo);
+    const fromH = hospitalsRef.current.find(h => h.id === routeFrom);
+    const toH = hospitalsRef.current.find(h => h.id === routeTo);
     if (!fromH || !toH) return;
 
     setRouteLoading(true);
     setRouteInfo(null);
     routeLayerRef.current.clearLayers();
 
+    // Cancel any running animation
+    if (vehicleAnimRef.current) {
+      cancelAnimationFrame(vehicleAnimRef.current);
+      vehicleAnimRef.current = null;
+    }
+
     fetch(`${API}/routes/geometry?from_lat=${fromH.lat}&from_lng=${fromH.lng}&to_lat=${toH.lat}&to_lng=${toH.lng}`)
       .then(r => r.json())
       .then(data => {
-        if (data.success && data.geometry) {
-          const coords = data.geometry.coordinates.map(c => [c[1], c[0]]);
+        const coords = (data?.success && data.geometry?.coordinates?.length)
+          ? data.geometry.coordinates.map(c => [c[1], c[0]])
+          : [
+              [fromH.lat, fromH.lng],
+              [(fromH.lat + toH.lat) / 2 + 0.003, (fromH.lng + toH.lng) / 2 + 0.003],
+              [toH.lat, toH.lng],
+            ];
 
-          // Glow effect
-          const glowLine = L.polyline(coords, {
-            color: '#2dd4bf',
-            weight: 8,
-            opacity: 0.15,
-            lineCap: 'round',
-            lineJoin: 'round',
+        // ── Layer 1: Outer neon glow ──
+        routeLayerRef.current.addLayer(
+          L.polyline(coords, {
+            color: '#06b6d4', weight: 16, opacity: 0.45,
+            lineCap: 'round', lineJoin: 'round', className: 'route-glow',
+          })
+        );
+
+        // ── Layer 2: Main solid route line ──
+        const mainLine = L.polyline(coords, {
+          color: '#0f766e', weight: 5, opacity: 0.9,
+          lineCap: 'round', lineJoin: 'round', className: 'route-main',
+        });
+        routeLayerRef.current.addLayer(mainLine);
+
+        // ── Layer 3: Animated ant trail (directional dashes) ──
+        routeLayerRef.current.addLayer(
+          L.polyline(coords, {
+            color: '#ffffff', weight: 3, opacity: 0.85,
+            dashArray: '8 16', lineCap: 'round', className: 'route-animated',
+          })
+        );
+
+        // ── Directional arrow markers along the path ──
+        const totalPts = coords.length;
+        const arrowInterval = Math.max(1, Math.floor(totalPts / 7));
+        for (let i = arrowInterval; i < totalPts - 1; i += arrowInterval) {
+          const pt = coords[i];
+          const nextPt = coords[Math.min(i + 1, totalPts - 1)];
+          const angle = bearing(pt, nextPt);
+          const arrowIcon = L.divIcon({
+            className: 'route-direction-arrow',
+            html: `
+              <div style="background:rgba(15,23,42,0.85);border:1px solid #2dd4bf;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 8px #2dd4bf;">
+                <i class="fa-solid fa-chevron-right" style="color:#2dd4bf;font-size:10px;transform:rotate(${angle - 90}deg);"></i>
+              </div>
+            `,
+            iconSize: [22, 22],
+            iconAnchor: [11, 11],
           });
-          routeLayerRef.current.addLayer(glowLine);
-
-          // Main route line
-          const routeLine = L.polyline(coords, {
-            color: '#2dd4bf',
-            weight: 3.5,
-            opacity: 0.9,
-            dashArray: '12 6',
-            lineCap: 'round',
-            lineJoin: 'round',
-          });
-          routeLayerRef.current.addLayer(routeLine);
-
-          // Animated overlay
-          const animLine = L.polyline(coords, {
-            color: '#ffffff',
-            weight: 2,
-            opacity: 0.4,
-            dashArray: '4 16',
-            lineCap: 'round',
-            className: 'route-animated',
-          });
-          routeLayerRef.current.addLayer(animLine);
-
-          mapInstanceRef.current.fitBounds(routeLine.getBounds(), { padding: [60, 60] });
-
-          setRouteInfo({
-            distance: data.distance_km,
-            duration: data.duration_min,
-            from: fromH.name,
-            to: toH.name,
-          });
+          routeLayerRef.current.addLayer(L.marker(pt, { icon: arrowIcon, interactive: false }));
         }
+
+        // ── Origin endpoint pulsing marker ──
+        const originIcon = L.divIcon({
+          className: 'route-endpoint-marker',
+          html: `<div class="route-endpoint-ring" style="--ring-color:#2dd4bf"><div class="ring-dot" style="background:#2dd4bf;box-shadow:0 0 12px #2dd4bf;"></div></div>`,
+          iconSize: [24, 24], iconAnchor: [12, 12],
+        });
+        routeLayerRef.current.addLayer(L.marker(coords[0], { icon: originIcon, interactive: false }));
+
+        // ── Destination endpoint pulsing marker ──
+        const destIcon = L.divIcon({
+          className: 'route-endpoint-marker',
+          html: `<div class="route-endpoint-ring" style="--ring-color:#f43f5e"><div class="ring-dot" style="background:#f43f5e;box-shadow:0 0 12px #f43f5e;"></div></div>`,
+          iconSize: [24, 24], iconAnchor: [12, 12],
+        });
+        routeLayerRef.current.addLayer(L.marker(coords[coords.length - 1], { icon: destIcon, interactive: false }));
+
+
+        // ── Animated vehicle marker ──
+        const vehicleIcon = L.divIcon({
+          className: 'route-vehicle-marker',
+          html: `
+            <div class="route-vehicle-icon" style="background:#0f172a;border:2px solid #2dd4bf;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;box-shadow:0 0 16px #2dd4bf;">
+              <i class="fa-solid fa-truck-fast" style="color:#2dd4bf;font-size:14px;"></i>
+            </div>
+          `,
+          iconSize: [34, 34], iconAnchor: [17, 17],
+        });
+        const vMarker = L.marker(coords[0], { icon: vehicleIcon, interactive: false, zIndexOffset: 1000 });
+        routeLayerRef.current.addLayer(vMarker);
+        vehicleMarkerRef.current = vMarker;
+
+        // ─── SLOW + SMOOTH vehicle animation ───
+        // 30 seconds for a full trip, with ease-in-out for realistic acceleration/deceleration
+        const TRAVEL_DURATION = 45000;
+        let startTime = null;
+
+        // Pre-compute cumulative distances for efficient trail slicing
+        const cumDists = [0];
+        for (let i = 1; i < coords.length; i++) {
+          const d = Math.sqrt(
+            Math.pow(coords[i][0] - coords[i - 1][0], 2) +
+            Math.pow(coords[i][1] - coords[i - 1][1], 2)
+          );
+          cumDists.push(cumDists[i - 1] + d);
+        }
+        const totalDist = cumDists[cumDists.length - 1];
+
+        function getVehiclePos(t) {
+          if (totalDist === 0) return coords[0];
+          const targetDist = t * totalDist;
+          for (let i = 0; i < coords.length; i++) {
+            if (cumDists[i] >= targetDist) {
+              const prevDist = cumDists[i - 1] || 0;
+              const segLen = cumDists[i] - prevDist;
+              const segT = segLen > 0 ? (targetDist - prevDist) / segLen : 0;
+              const p0 = coords[i - 1] || coords[0];
+              return [
+                p0[0] + (coords[i][0] - p0[0]) * segT,
+                p0[1] + (coords[i][1] - p0[1]) * segT,
+              ];
+            }
+          }
+          return coords[coords.length - 1];
+        }
+
+        function animateVehicle(timestamp) {
+          if (!startTime) startTime = timestamp;
+          const elapsed = (timestamp - startTime) % TRAVEL_DURATION;
+          const linearT = elapsed / TRAVEL_DURATION;
+          // Apply smooth easing so the vehicle accelerates and decelerates naturally
+          const easedT = easeInOutCubic(linearT);
+
+          const pos = getVehiclePos(easedT);
+          if (vehicleMarkerRef.current && pos && !isNaN(pos[0]) && !isNaN(pos[1])) {
+            vehicleMarkerRef.current.setLatLng(pos);
+          }
+
+
+          vehicleAnimRef.current = requestAnimationFrame(animateVehicle);
+        }
+        vehicleAnimRef.current = requestAnimationFrame(animateVehicle);
+
+        // Fit map to the route
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.fitBounds(mainLine.getBounds(), { padding: [70, 70], maxZoom: 15 });
+        }
+
+        setRouteInfo({
+          distance: data?.distance_km || Math.round(L.latLng(fromH.lat, fromH.lng).distanceTo(L.latLng(toH.lat, toH.lng)) / 100) / 10,
+          duration: data?.duration_min || 12,
+          from: fromH.name,
+          to: toH.name,
+        });
       })
-      .catch(console.error)
+      .catch(err => console.error('Route calculation error:', err))
       .finally(() => setRouteLoading(false));
-  }, [routeFrom, routeTo, hospitals]);
+
+    return () => {
+      if (vehicleAnimRef.current) {
+        cancelAnimationFrame(vehicleAnimRef.current);
+        vehicleAnimRef.current = null;
+      }
+    };
+  }, [routeFrom, routeTo]);
 
   // Filter hospitals for sidebar
   const filteredHospitals = useMemo(() => {
@@ -315,6 +487,11 @@ export default function LiveMap() {
   }
 
   function clearRoute() {
+    if (vehicleAnimRef.current) {
+      cancelAnimationFrame(vehicleAnimRef.current);
+      vehicleAnimRef.current = null;
+    }
+    vehicleMarkerRef.current = null;
     setRouteFrom(null);
     setRouteTo(null);
     setRouteInfo(null);
@@ -350,7 +527,7 @@ export default function LiveMap() {
       <div className="page-header" style={{ marginBottom: '1rem' }}>
         <div>
           <h1>Live Map</h1>
-          <p className="text-muted">Interactive hospital network with real-time data & road routing</p>
+          <p className="text-muted">Interactive hospital network with real-time data &amp; road routing</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button className="btn btn-secondary" onClick={toggleFullscreen}>
@@ -402,24 +579,52 @@ export default function LiveMap() {
               <div className="livemap-sidebar-search">
                 <div className="search-bar" style={{ margin: 0 }}>
                   <i className="fa-solid fa-search"></i>
-                  <input
-                    placeholder="Search hospitals..."
-                    value={searchTerm}
-                    onChange={e => setSearchTerm(e.target.value)}
-                  />
+                  <input placeholder="Search hospitals..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                 </div>
                 <div className="livemap-sidebar-filters">
                   {['all', 'active', 'issues'].map(f => (
-                    <button
-                      key={f}
-                      className={`livemap-filter-btn ${filterStatus === f ? 'active' : ''}`}
-                      onClick={() => setFilterStatus(f)}
-                    >
+                    <button key={f} className={`livemap-filter-btn ${filterStatus === f ? 'active' : ''}`} onClick={() => setFilterStatus(f)}>
                       {f === 'all' ? 'All' : f === 'active' ? 'Active' : 'Issues'}
                     </button>
                   ))}
                 </div>
               </div>
+
+              {/* Active In-Transit Deliveries */}
+              {inTransitRequests.length > 0 && (
+                <div style={{ padding: '0.75rem', borderBottom: '1px solid var(--border-color)', background: 'rgba(45, 212, 191, 0.05)' }}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <i className="fa-solid fa-truck-fast"></i> Active In-Transit Delivery
+                  </div>
+                  {inTransitRequests.map(req => {
+                    const fH = hospitals.find(h => h.id === req.provider_clinic_id);
+                    const tH = hospitals.find(h => h.id === req.requesting_clinic_id);
+                    const isSelected = routeFrom === req.provider_clinic_id && routeTo === req.requesting_clinic_id;
+                    return (
+                      <div
+                        key={req.id}
+                        onClick={() => { setRouteFrom(req.provider_clinic_id); setRouteTo(req.requesting_clinic_id); }}
+                        style={{
+                          padding: '0.5rem', borderRadius: '0.5rem', cursor: 'pointer',
+                          background: isSelected ? 'rgba(45, 212, 191, 0.15)' : 'rgba(255,255,255,0.03)',
+                          border: `1px solid ${isSelected ? 'var(--primary)' : 'var(--border-color)'}`,
+                          marginBottom: '0.4rem', transition: 'all 0.2s',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                          <strong style={{ fontSize: '0.78rem', color: 'var(--text-main)' }}>Request #{req.id}</strong>
+                          <span style={{ fontSize: '0.65rem', background: '#2dd4bf', color: '#042f2e', padding: '0.1rem 0.4rem', borderRadius: '999px', fontWeight: 800 }}>IN TRANSIT</span>
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                          <span>{fH?.name?.split(' ')[0] || req.provider_clinic_id}</span>
+                          <i className="fa-solid fa-arrow-right" style={{ fontSize: '0.6rem', color: 'var(--primary)' }}></i>
+                          <span>{tH?.name?.split(' ')[0] || req.requesting_clinic_id}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Route builder */}
               <div className="livemap-route-builder">
@@ -443,27 +648,19 @@ export default function LiveMap() {
                 )}
               </div>
 
-              {/* Hospital list */}
+              {/* Hospital list — paginated to handle 50k+ nodes */}
               <div className="livemap-sidebar-list">
-                {filteredHospitals.map(h => {
+                {filteredHospitals.slice(0, sidebarLimit).map(h => {
                   const isSelected = selectedHospitalId === h.id;
                   const hasIssues = h.lowStock > 0 || h.nearExpiry > 0;
                   return (
-                    <div
-                      key={h.id}
-                      className={`livemap-hospital-card ${isSelected ? 'selected' : ''}`}
-                      onClick={() => flyToHospital(h.id)}
-                    >
+                    <div key={h.id} className={`livemap-hospital-card ${isSelected ? 'selected' : ''}`} onClick={() => flyToHospital(h.id)}>
                       <div className="livemap-hospital-card-top">
                         <div>
                           <div className="livemap-hospital-name">{h.name}</div>
                           <div className="livemap-hospital-id">{h.id}</div>
                         </div>
-                        <button
-                          className="livemap-route-btn"
-                          title="Use for routing"
-                          onClick={(e) => { e.stopPropagation(); handleRouteSelect(h.id); }}
-                        >
+                        <button className="livemap-route-btn" title="Use for routing" onClick={(e) => { e.stopPropagation(); handleRouteSelect(h.id); }}>
                           <i className="fa-solid fa-route"></i>
                         </button>
                       </div>
@@ -490,6 +687,16 @@ export default function LiveMap() {
                     </div>
                   );
                 })}
+                {sidebarLimit < filteredHospitals.length && (
+                  <button
+                    className="btn btn-secondary"
+                    style={{ width: '100%', justifyContent: 'center', padding: '0.6rem', fontSize: '0.78rem', marginTop: '0.25rem' }}
+                    onClick={() => setSidebarLimit(prev => prev + 50)}
+                  >
+                    <i className="fa-solid fa-chevron-down"></i>
+                    Load More ({Math.min(50, filteredHospitals.length - sidebarLimit)} of {filteredHospitals.length - sidebarLimit} remaining)
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -497,6 +704,37 @@ export default function LiveMap() {
 
         {/* Map */}
         <div className="livemap-map-area">
+          {/* Active Deliveries Quick Bar */}
+          {inTransitRequests.length > 0 && (
+            <div className="livemap-active-routes-bar">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--primary)', fontSize: '0.78rem', fontWeight: 700, paddingRight: '0.5rem', borderRight: '1px solid rgba(255,255,255,0.15)' }}>
+                <i className="fa-solid fa-truck-fast"></i>
+                <span>ACTIVE DELIVERY:</span>
+              </div>
+              {inTransitRequests.map(req => {
+                const fH = hospitals.find(h => h.id === req.provider_clinic_id);
+                const tH = hospitals.find(h => h.id === req.requesting_clinic_id);
+                const isSelected = routeFrom === req.provider_clinic_id && routeTo === req.requesting_clinic_id;
+                return (
+                  <button
+                    key={req.id}
+                    type="button"
+                    className={`livemap-active-route-pill ${isSelected ? 'active' : ''}`}
+                    onClick={() => { setRouteFrom(req.provider_clinic_id); setRouteTo(req.requesting_clinic_id); }}
+                  >
+                    <span style={{ color: 'var(--primary)', fontWeight: 700 }}>#{req.id}</span>
+                    <span>{fH?.name?.split(' ')[0] || req.provider_clinic_id}</span>
+                    <i className="fa-solid fa-arrow-right" style={{ fontSize: '0.65rem' }}></i>
+                    <span>{tH?.name?.split(' ')[0] || req.requesting_clinic_id}</span>
+                    <span style={{ fontSize: '0.65rem', background: '#2dd4bf', color: '#042f2e', padding: '0.1rem 0.4rem', borderRadius: '999px', fontWeight: 800 }}>
+                      IN TRANSIT
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <div ref={mapRef} className="livemap-map" id="live-map"></div>
 
           {/* Route info overlay */}
