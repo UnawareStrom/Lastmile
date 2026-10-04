@@ -128,7 +128,7 @@ export default function ProviderPortal() {
             onChange={e => setMyClinicId(e.target.value)}
             style={{ padding: '0.5rem', borderRadius: '0.5rem', background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }}
           >
-            {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {clinics.slice(0, 100).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
       </div>

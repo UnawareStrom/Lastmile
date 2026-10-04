@@ -133,17 +133,7 @@ export default function Inventory() {
           <p className="text-muted">Full medicine stock across all clinic nodes</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(0,0,0,0.2)', padding: '0.3rem 0.6rem', borderRadius: '0.5rem', border: '1px solid var(--border-color)' }}>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Clinic:</span>
-            <select 
-              value={viewingAs} 
-              onChange={e => setViewingAs(e.target.value)}
-              style={{ background: 'transparent', border: 'none', color: 'var(--text-main)', fontSize: '0.85rem', outline: 'none', cursor: 'pointer' }}
-            >
-              <option value="ADMIN">All Clinics (Network View)</option>
-              {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
+
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
             <i className="fa-solid fa-circle" style={{ color: 'var(--success)', fontSize: '0.5rem', marginRight: '0.3rem' }}></i>
             Updated {lastRefresh.toLocaleTimeString()}
@@ -315,7 +305,7 @@ export default function Inventory() {
                 <label>Clinic</label>
                 <select required value={form.clinicId} onChange={e => setForm({ ...form, clinicId: e.target.value })}>
                   <option value="">Select clinic...</option>
-                  {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {clinics.slice(0, 100).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
             </div>
@@ -413,7 +403,7 @@ export default function Inventory() {
                   style={{ width: '100%', padding: '0.65rem', background: 'var(--bg-inset)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '0.4rem' }}
                 >
                   <option value="">Select Clinic...</option>
-                  {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {clinics.slice(0, 100).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
             </div>
