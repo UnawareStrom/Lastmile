@@ -5,7 +5,7 @@ import Modal from '../components/Modal';
 const API = `http://${window.location.hostname}:8000/api`;
 
 export default function ClinicPortal() {
-  const { clinics, inventory, fetchClinics, fetchInventory, simulateTransfer, config, calcTrueExcess, addInventoryItem } = useApp();
+  const { clinics, inventory, fetchClinics, fetchInventory, simulateTransfer, config, calcTrueExcess, addInventoryItem, isAdminLoggedIn } = useApp();
 
   const [myClinicId, setMyClinicId] = useState(() => localStorage.getItem('cp_clinicId') || '');
   const [requests, setRequests] = useState([]);
@@ -154,18 +154,20 @@ export default function ClinicPortal() {
           <h1>Clinic Portal</h1>
           <p className="text-muted">Your clinic's live inventory, requests & deliveries</p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Your Clinic:
-          </span>
-          <select
-            value={myClinicId}
-            onChange={e => handleClinicChange(e.target.value)}
-            style={{ minWidth: '220px' }}
-          >
-            {clinics.slice(0, 100).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
+        {isAdminLoggedIn && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Your Clinic:
+            </span>
+            <select
+              value={myClinicId}
+              onChange={e => handleClinicChange(e.target.value)}
+              style={{ minWidth: '220px' }}
+            >
+              {clinics.slice(0, 100).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Non-admin notice */}

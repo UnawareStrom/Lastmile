@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Fragment } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import Modal from '../components/Modal';
 
@@ -87,7 +87,7 @@ export default function Inventory() {
     e.preventDefault();
     setAddingStock(true);
     const medName = uniqueMeds.find(m => m.masterCode === addStockForm.masterCode)?.name || 'Unknown Medicine';
-    
+
     await addInventoryItem({
       masterCode: addStockForm.masterCode,
       name: medName,
@@ -96,7 +96,7 @@ export default function Inventory() {
       avgMonthlyUsage: 50, // Default for now
       expiryDays: parseInt(addStockForm.expiryDays),
     });
-    
+
     setAddingStock(false);
     setShowAddStockModal(false);
     setAddStockForm({ masterCode: '', clinicId: '', stock: '', expiryDays: '' });
@@ -133,7 +133,18 @@ export default function Inventory() {
           <p className="text-muted">Full medicine stock across all clinic nodes</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-
+          {isAdminLoggedIn && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.4rem', marginRight: '0.5rem' }}>
+              <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Viewing As:</label>
+              <select
+                value={viewingAs}
+                onChange={e => setViewingAs(e.target.value)}
+                style={{ padding: '0.5rem', borderRadius: '0.5rem', background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-color)', color: 'var(--text-main)', fontSize: '0.85rem' }}
+              >
+                <option value="ADMIN">All Clinics (Network View)</option>
+              </select>
+            </div>
+          )}
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
             <i className="fa-solid fa-circle" style={{ color: 'var(--success)', fontSize: '0.5rem', marginRight: '0.3rem' }}></i>
             Updated {lastRefresh.toLocaleTimeString()}
@@ -216,8 +227,8 @@ export default function Inventory() {
                 else if (isLowStock) badge = <span className="badge badge-danger">Low Stock</span>;
 
                 return (
-                  <React.Fragment key={group.masterCode}>
-                    <tr style={{ backgroundColor: isLowStock ? 'rgba(239, 68, 68, 0.05)' : 'transparent' }}>
+                  <>
+                    <tr key={group.masterCode} style={{ backgroundColor: isLowStock ? 'rgba(239, 68, 68, 0.05)' : 'transparent' }}>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                           {showExpiryDropdown && (
@@ -282,7 +293,7 @@ export default function Inventory() {
                         </td>
                       </tr>
                     )}
-                  </React.Fragment>
+                  </>
                 );
               })}
               {filtered.length === 0 && (
@@ -305,7 +316,7 @@ export default function Inventory() {
                 <label>Clinic</label>
                 <select required value={form.clinicId} onChange={e => setForm({ ...form, clinicId: e.target.value })}>
                   <option value="">Select clinic...</option>
-                  {clinics.slice(0, 100).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
             </div>
@@ -343,11 +354,11 @@ export default function Inventory() {
           <div style={{ marginBottom: '1rem' }}>
             <div className="search-bar">
               <i className="fa-solid fa-search"></i>
-              <input 
-                type="text" 
-                placeholder="Search by code or medicine name..." 
-                value={searchCodes} 
-                onChange={e => setSearchCodes(e.target.value)} 
+              <input
+                type="text"
+                placeholder="Search by code or medicine name..."
+                value={searchCodes}
+                onChange={e => setSearchCodes(e.target.value)}
               />
             </div>
           </div>
@@ -367,7 +378,7 @@ export default function Inventory() {
                       <td><strong>{m.masterCode}</strong></td>
                       <td>{m.name}</td>
                     </tr>
-                ))}
+                  ))}
                 {uniqueMeds.filter(m => m.masterCode.toLowerCase().includes(searchCodes.toLowerCase()) || m.name.toLowerCase().includes(searchCodes.toLowerCase())).length === 0 && (
                   <tr>
                     <td colSpan="2" style={{ textAlign: 'center', padding: '1.5rem' }}>No medicines found matching your search.</td>
@@ -403,11 +414,11 @@ export default function Inventory() {
                   style={{ width: '100%', padding: '0.65rem', background: 'var(--bg-inset)', color: 'var(--text-main)', border: '1px solid var(--border-color)', borderRadius: '0.4rem' }}
                 >
                   <option value="">Select Clinic...</option>
-                  {clinics.slice(0, 100).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {clinics.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
             </div>
-            
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
               <div className="form-group">
                 <label>Quantity to Add</label>
@@ -432,7 +443,7 @@ export default function Inventory() {
                 />
               </div>
             </div>
-            
+
             <div className="form-actions" style={{ marginTop: '1.5rem' }}>
               <button type="submit" className="btn btn-primary" disabled={addingStock}>
                 {addingStock ? 'Adding...' : 'Save Stock'}
@@ -530,5 +541,14 @@ export default function Inventory() {
         </Modal>
       )}
     </div>
+  );
+}
+Cancel
+              </button >
+            </div >
+          </div >
+        </Modal >
+      )}
+    </div >
   );
 }

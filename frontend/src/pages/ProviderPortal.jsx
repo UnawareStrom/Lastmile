@@ -1,10 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 
-const API = `http://${window.location.hostname}:8000/api`;
-
 export default function ProviderPortal() {
-  const { clinics, fetchClinics, inventory } = useApp();
+  const { clinics, fetchClinics, inventory, isAdminLoggedIn } = useApp();
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [myClinicId, setMyClinicId] = useState('');
@@ -14,10 +12,9 @@ export default function ProviderPortal() {
   const [otpSuccess, setOtpSuccess] = useState({});
   const [acceptedOtp, setAcceptedOtp] = useState({});
   const [tabFilter, setTabFilter] = useState('active');
-  const [offerAmts, setOfferAmts] = useState({});
+  const [offerAmts, setOfferAmts] = useState({}); // custom offer amounts per request
   const [showOtp, setShowOtp] = useState({});
   const [copiedOtp, setCopiedOtp] = useState({});
-  const copiedTimersRef = useRef({});
 
   useEffect(() => {
     if (clinics.length === 0) fetchClinics();
@@ -37,7 +34,7 @@ export default function ProviderPortal() {
 
   async function fetchRequests() {
     try {
-      const res = await fetch(`${API}/requests`);
+      const res = await fetch(`http://${window.location.hostname}:8000/api/requests`);
       const data = await res.json();
       setRequests(data);
     } catch (e) {
@@ -49,7 +46,7 @@ export default function ProviderPortal() {
 
   async function handleAccept(reqId, providerId, customAmt) {
     try {
-      const res = await fetch(`${API}/requests/${reqId}/accept`, {
+      const res = await fetch(`http://${window.location.hostname}:8000/api/requests/${reqId}/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider_clinic_id: providerId, custom_transfer_amt: customAmt || null })
@@ -71,7 +68,7 @@ export default function ProviderPortal() {
     const otp = otpInputs[reqId] || '';
     setOtpError(prev => ({ ...prev, [reqId]: null }));
     try {
-      const res = await fetch(`${API}/requests/${reqId}/verify`, {
+      const res = await fetch(`http://${window.location.hostname}:8000/api/requests/${reqId}/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ otp })
@@ -91,7 +88,7 @@ export default function ProviderPortal() {
   async function handleCancel(reqId) {
     if (!window.confirm('Are you sure you want to cancel this request?')) return;
     try {
-      const res = await fetch(`${API}/requests/${reqId}/cancel`, {
+      const res = await fetch(`http://${window.location.hostname}:8000/api/requests/${reqId}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -105,6 +102,14 @@ export default function ProviderPortal() {
       alert('Network error. Could not cancel request.');
     }
   }
+
+  const statusColor = (status) => {
+    if (status === 'Pending') return 'var(--warning, #f59e0b)';
+    if (status === 'In Transit') return 'var(--primary)';
+    if (status === 'Delivered') return 'var(--success)';
+    if (status === 'Cancelled') return 'var(--danger)';
+    return 'var(--text-muted)';
+  };
 
   const statusBadge = (status) => {
     if (status === 'Pending') return 'badge-warning';
@@ -121,51 +126,53 @@ export default function ProviderPortal() {
           <h1>Provider Portal</h1>
           <p className="text-muted">Live Request Feed</p>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.4rem' }}>
-          <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Viewing As:</label>
-          <select
-            value={myClinicId}
-            onChange={e => setMyClinicId(e.target.value)}
-            style={{ padding: '0.5rem', borderRadius: '0.5rem', background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }}
-          >
-            {clinics.slice(0, 100).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
-      </div>
-
-        {/* Tab Filter */}
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
-          <button
-            className={`btn ${tabFilter === 'active' ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ padding: '0.4rem 1rem', fontSize: '0.85rem' }}
-            onClick={() => setTabFilter('active')}
-          >
-            <i className="fa-solid fa-bolt"></i> Active
-            <span style={{ marginLeft: '0.4rem', background: 'rgba(255,255,255,0.2)', borderRadius: '999px', padding: '0 0.4rem', fontSize: '0.75rem' }}>
-              {requests.filter(r => r.status === 'Pending' || r.status === 'In Transit').length}
-            </span>
-          </button>
-          <button
-            className={`btn ${tabFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`}
-            style={{ padding: '0.4rem 1rem', fontSize: '0.85rem' }}
-            onClick={() => setTabFilter('all')}
-          >
-            <i className="fa-solid fa-clock-rotate-left"></i> All History ({requests.length})
-          </button>
-        </div>
-
-        {loading && <p>Loading requests...</p>}
-        {!loading && requests.length === 0 && (
-          <div className="allocation-placeholder">
-            <i className="fa-solid fa-inbox" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}></i>
-            <p>No requests yet. Go to the Dashboard to broadcast one.</p>
+        {isAdminLoggedIn && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.4rem' }}>
+            <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Viewing As:</label>
+            <select
+              value={myClinicId}
+              onChange={e => setMyClinicId(e.target.value)}
+              style={{ padding: '0.5rem', borderRadius: '0.5rem', background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }}
+            >
+              {clinics.slice(0, 100).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
           </div>
         )}
+      </div>
 
-        <div className="layout-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
-          {requests
-            .filter(req => tabFilter === 'all' || req.status === 'Pending' || req.status === 'In Transit')
-            .map(req => {
+      {/* Tab Filter */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' }}>
+        <button
+          className={`btn ${tabFilter === 'active' ? 'btn-primary' : 'btn-secondary'}`}
+          style={{ padding: '0.4rem 1rem', fontSize: '0.85rem' }}
+          onClick={() => setTabFilter('active')}
+        >
+          <i className="fa-solid fa-bolt"></i> Active
+          <span style={{ marginLeft: '0.4rem', background: 'rgba(255,255,255,0.2)', borderRadius: '999px', padding: '0 0.4rem', fontSize: '0.75rem' }}>
+            {requests.filter(r => r.status === 'Pending' || r.status === 'In Transit').length}
+          </span>
+        </button>
+        <button
+          className={`btn ${tabFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`}
+          style={{ padding: '0.4rem 1rem', fontSize: '0.85rem' }}
+          onClick={() => setTabFilter('all')}
+        >
+          <i className="fa-solid fa-clock-rotate-left"></i> All History ({requests.length})
+        </button>
+      </div>
+
+      {loading && <p>Loading requests...</p>}
+      {!loading && requests.length === 0 && (
+        <div className="allocation-placeholder">
+          <i className="fa-solid fa-inbox" style={{ fontSize: '2rem', marginBottom: '0.5rem' }}></i>
+          <p>No requests yet. Go to the Dashboard to broadcast one.</p>
+        </div>
+      )}
+
+      <div className="layout-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
+        {requests
+          .filter(req => tabFilter === 'all' || req.status === 'Pending' || req.status === 'In Transit')
+          .map(req => {
             const isCancelled = req.status === 'Cancelled';
             const matches = req.matches_json ? JSON.parse(req.matches_json) : [];
             const isPending = req.status === 'Pending';
@@ -307,9 +314,7 @@ export default function ProviderPortal() {
                               onClick={() => {
                                 navigator.clipboard.writeText(rawOtp);
                                 setCopiedOtp(prev => ({ ...prev, [req.id]: true }));
-                                // Clear any existing timer for this request
-                                if (copiedTimersRef.current[req.id]) clearTimeout(copiedTimersRef.current[req.id]);
-                                copiedTimersRef.current[req.id] = setTimeout(() => setCopiedOtp(prev => ({ ...prev, [req.id]: false })), 2000);
+                                setTimeout(() => setCopiedOtp(prev => ({ ...prev, [req.id]: false })), 2000);
                               }}
                             >
                               <i className={`fa-solid ${copiedOtp[req.id] ? 'fa-check' : 'fa-copy'}`}></i>
@@ -392,7 +397,7 @@ export default function ProviderPortal() {
               </div>
             );
           })}
-        </div>
+      </div>
 
       {/* Confirmation Modal */}
       {confirmMatch && (
